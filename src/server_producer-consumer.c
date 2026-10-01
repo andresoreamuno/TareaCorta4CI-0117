@@ -108,8 +108,7 @@ static int desencolar(cola_connection_t *cola, connection_t *conn)
 
     //libera mutex
     //pthread_mutex_unlock(&cola->mutex);
-    //return 1;
-    
+    return 1;
 }
 
 static void on_sigint(int signum)
@@ -156,11 +155,11 @@ static void *handle_connection(void *arg)
     }
     
     //mutex para evitar condicion de carrera al actualizar solicitudes atendidas
-    while (sem_wait(&g_cola.bloqueado) && errno == EINTR);
+    while (sem_wait(&g_served_sem) && errno == EINTR);
     //pthread_mutex_lock(&g_served_mutex);
     g_requests_served++;
     //pthread_mutex_unlock(&g_served_mutex);
-    sem_post(&g_cola.bloqueado);
+    sem_post(&g_served_sem);
 
     //unsigned long current = g_requests_served;
     //sched_yield();
@@ -219,8 +218,13 @@ static void *consumidor(void *arg)
     (void)arg;
     connection_t conn;
 
-    while(desencolar(&g_cola, &conn))
+    
+    while(desencolar(&g_cola, &conn)){
+        if (conn.file_descriptor == -1)
+            break;
         handle_connection(&conn);
+    }
+        
 
     return NULL;
 }
@@ -302,6 +306,14 @@ int main(int argc, char **argv)
     //pthread_mutex_lock(&g_cola.mutex);
     //pthread_cond_broadcast(&g_cola.no_vacio);
     //pthread_mutex_unlock(&g_cola.mutex);
+
+    //Encola "pildora" para sacar a posibles hilos aun en espera
+    for (long i = 0; i < cant_consumidores; i++){
+        connection_t final = { .file_descriptor = -1,
+                               .connection_id = 0
+                             };
+        encolar(&g_cola, final);
+    }
 
     //hace el join de los hilos antes de cerrar
     for (long i = 0; i < cant_consumidores; i++){
