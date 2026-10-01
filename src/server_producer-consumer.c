@@ -12,6 +12,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <semaphore.h>
 
 #define _POSIX_C_SOURCE 200809L
 
@@ -35,19 +36,14 @@ typedef struct {
     connection_t conexiones[CAPACIDAD_COLA];
     int frente;
     int atras;
-    int cantidad;
-    pthread_mutex_t mutex;
-    pthread_cond_t no_vacio;
-    pthread_cond_t no_lleno;
+    sem_t cant_libre;
+    sem_t cant_ocupada;
+    sem_t bloqueada;
 } cola_connection_t;
 
 static cola_connection_t g_cola = {
     .frente = 0,
-    .atras = 0,
-    .cantidad = 0,
-    .mutex = PTHREAD_MUTEX_INITIALIZER,
-    .no_vacio = PTHREAD_COND_INITIALIZER,
-    .no_lleno = PTHREAD_COND_INITIALIZER,
+    .atras = 0
 };
 
 static void encolar(cola_connection_t *cola, connection_t conn)
@@ -75,31 +71,34 @@ static void encolar(cola_connection_t *cola, connection_t conn)
 static int desencolar(cola_connection_t *cola, connection_t *conn)
 {
     //bloquea el mutex
-    pthread_mutex_lock(&cola->mutex);
+    //pthread_mutex_lock(&cola->mutex);
 
-    while (cola->cantidad==0 && g_running)
-    {
-        pthread_cond_wait(&cola->no_vacio, &cola->mutex);
+    sem_wait(&g_cola->bloqueada);
 
-    }
+    //while (cola->cantidad==0 && g_running)
+    //{
+    //    pthread_cond_wait(&cola->no_vacio, &cola->mutex);
+    //}
 
     //Si no hay items en cola libera mutex y retorna 0 (programa cerrando)
-    if (cola->cantidad == 0){
-        pthread_mutex_unlock(&cola->mutex);
-        return 0;
-    }
+    //if (cola->cantidad == 0){
+    //    pthread_mutex_unlock(&cola->mutex);
+    //    return 0;
+    //}
 
     //Saca conexion y actualiza variables cola
     *conn = cola->conexiones[cola->frente];
     cola->frente = (cola->frente + 1) % CAPACIDAD_COLA;
-    cola->cantidad--;
+    //cola->cantidad--;
 
     //Avisa que hay campo
-    pthread_cond_signal(&cola->no_lleno);
+    //pthread_cond_signal(&cola->no_lleno);
+    sem_post(&gcola->cant_libre);
 
     //libera mutex
-    pthread_mutex_unlock(&cola->mutex);
-    return 1;
+    //pthread_mutex_unlock(&cola->mutex);
+    //return 1;
+    sem_post(&cola->bloqueada);
 }
 
 static void on_sigint(int signum)
@@ -229,6 +228,11 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
+    //Inicializa semaforos
+    sem_init(&g_cola.cant_libre,0,CAPACIDAD_COLA);
+    sem_init(&g_cola.cant_ocupada,0,0);
+    sem_init(&g_cola.bloqueada,0,1);
+
     //Inicializa hilos consumidores
     pthread_t *consumidores = calloc((size_t)cant_consumidores, sizeof *consumidores);
 
@@ -272,45 +276,13 @@ int main(int argc, char **argv)
 
         conn.file_descriptor = client_file_descriptor;
         conn.connection_id = ++accepted;
-        encolar(&g_cola, conn);
-
-        //connection_t *conn = malloc(sizeof(connection_t));
-
-        //if (conn == NULL)
-        //{
-        //    fprintf(stderr, "out of memory, dropping connection\n");
-        //    close(client_file_descriptor);
-        //    continue;
-        //}
-
-        //conn->file_descriptor = client_file_descriptor;
-        //conn->connection_id = ++accepted;
-
-        //pthread_t thread_id;
-
-        //int pthread_created = pthread_create(&thread_id, NULL, handle_connection, conn);
-
-        //if (pthread_created != 0)
-        //{
-        //    fprintf(stderr, "pthread_create failed %s\n", strerror(pthread_created));
-        //    close(client_file_descriptor);
-        //    free(conn);
-        //    --accepted;
-        //    continue;
-        //}
-        //pthread_created = pthread_detach(thread_id);
-        //if (pthread_created != 0)
-        //{
-        //    fprintf(stderr, "pthread_detach failed %s\n", strerror(pthread_created));
-        //}
+        encolar(&g_cola, conn);        
     }
 
     if (close(listen_file_descriptor))
     {
         perror("close(listen_file_descriptor)");
     }
-
-    //sleep(DRAIN_SECONDS);
 
     //marca bandera apagado y avisa a posibles hilos dormidos para que terminen
     g_running = 0;
@@ -328,10 +300,13 @@ int main(int argc, char **argv)
     //libera recursos
     free(consumidores);
 
-    pthread_mutex_destroy(&g_cola.mutex);
-    pthread_cond_destroy(&g_cola.no_lleno);
-    pthread_cond_destroy(&g_cola.no_vacio);
+    //pthread_mutex_destroy(&g_cola.mutex);
+    //pthread_cond_destroy(&g_cola.no_lleno);
+    //pthread_cond_destroy(&g_cola.no_vacio);
 
+    sem_destroy(&gcola->bloqueada);
+    sem_destroy(&gcola->cant_libre);
+    sem_destroy(&gcola->cant_ocupada);
 
     printf("\naccepted: %lu\n", accepted);
     printf("served:   %lu\n", g_requests_served);
