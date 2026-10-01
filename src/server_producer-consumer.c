@@ -25,7 +25,8 @@ static volatile sig_atomic_t g_running = 1;
 
 static unsigned long g_requests_served = 0;
 
-static pthread_mutex_t g_served_mutex = PTHREAD_MUTEX_INITIALIZER;
+//static pthread_mutex_t g_served_mutex = PTHREAD_MUTEX_INITIALIZER;
+static sem_t g_served_sem;
 
 typedef struct {
     int file_descriptor;
@@ -36,9 +37,9 @@ typedef struct {
     connection_t conexiones[CAPACIDAD_COLA];
     int frente;
     int atras;
-    sem_t cant_libre;
-    sem_t cant_ocupada;
-    sem_t bloqueada;
+    sem_t libres;
+    sem_t ocupados;
+    sem_t bloqueado;
 } cola_connection_t;
 
 static cola_connection_t g_cola = {
@@ -49,36 +50,45 @@ static cola_connection_t g_cola = {
 static void encolar(cola_connection_t *cola, connection_t conn)
 {
     //bloquea el mutex
-    pthread_mutex_lock(&cola->mutex);
+    //pthread_mutex_lock(&cola->mutex);
+    while (sem_wait(&cola->libres) && errno == EINTR);
+    while (sem_wait(&cola->bloqueado) && errno == EINTR);
 
     //Espera no activa si la cola esta llena
-    while (cola->cantidad == CAPACIDAD_COLA)
-        pthread_cond_wait(&cola->no_lleno, &cola->mutex);
+    //while (cola->cantidad == CAPACIDAD_COLA)
+    //    pthread_cond_wait(&cola->no_lleno, &cola->mutex);
+    
 
     //inserta conexion y actualiza variables cola
     cola->conexiones[cola->atras] = conn;
     cola->atras = (cola->atras + 1) % CAPACIDAD_COLA;
-    cola->cantidad++;
+    //cola->cantidad++;
 
     //Avisa que hay cola
-    pthread_cond_signal(&cola->no_vacio);
+    //pthread_cond_signal(&cola->no_vacio);
+    sem_post(&cola->bloqueado);
+    sem_post(&cola->ocupados);
     
     //libera el mutex
-    pthread_mutex_unlock(&cola->mutex);
+    //pthread_mutex_unlock(&cola->mutex);
+    
 
 }
 
 static int desencolar(cola_connection_t *cola, connection_t *conn)
 {
+    
+    while (sem_wait(&cola->ocupados) && errno == EINTR);
+
     //bloquea el mutex
     //pthread_mutex_lock(&cola->mutex);
-
-    sem_wait(&g_cola->bloqueada);
+    while (sem_wait(&cola->bloqueado) && errno == EINTR);
 
     //while (cola->cantidad==0 && g_running)
     //{
     //    pthread_cond_wait(&cola->no_vacio, &cola->mutex);
     //}
+    
 
     //Si no hay items en cola libera mutex y retorna 0 (programa cerrando)
     //if (cola->cantidad == 0){
@@ -93,12 +103,13 @@ static int desencolar(cola_connection_t *cola, connection_t *conn)
 
     //Avisa que hay campo
     //pthread_cond_signal(&cola->no_lleno);
-    sem_post(&gcola->cant_libre);
+    sem_post(&cola->bloqueado);
+    sem_post(&cola->libres);
 
     //libera mutex
     //pthread_mutex_unlock(&cola->mutex);
     //return 1;
-    sem_post(&cola->bloqueada);
+    
 }
 
 static void on_sigint(int signum)
@@ -145,9 +156,11 @@ static void *handle_connection(void *arg)
     }
     
     //mutex para evitar condicion de carrera al actualizar solicitudes atendidas
-    pthread_mutex_lock(&g_served_mutex);
+    while (sem_wait(&g_cola.bloqueado) && errno == EINTR);
+    //pthread_mutex_lock(&g_served_mutex);
     g_requests_served++;
-    pthread_mutex_unlock(&g_served_mutex);
+    //pthread_mutex_unlock(&g_served_mutex);
+    sem_post(&g_cola.bloqueado);
 
     //unsigned long current = g_requests_served;
     //sched_yield();
@@ -229,9 +242,9 @@ int main(int argc, char **argv)
     }
 
     //Inicializa semaforos
-    sem_init(&g_cola.cant_libre,0,CAPACIDAD_COLA);
-    sem_init(&g_cola.cant_ocupada,0,0);
-    sem_init(&g_cola.bloqueada,0,1);
+    sem_init(&g_cola.libres,0,CAPACIDAD_COLA);
+    sem_init(&g_cola.ocupados,0,0);
+    sem_init(&g_cola.bloqueado,0,1);
 
     //Inicializa hilos consumidores
     pthread_t *consumidores = calloc((size_t)cant_consumidores, sizeof *consumidores);
@@ -286,9 +299,9 @@ int main(int argc, char **argv)
 
     //marca bandera apagado y avisa a posibles hilos dormidos para que terminen
     g_running = 0;
-    pthread_mutex_lock(&g_cola.mutex);
-    pthread_cond_broadcast(&g_cola.no_vacio);
-    pthread_mutex_unlock(&g_cola.mutex);
+    //pthread_mutex_lock(&g_cola.mutex);
+    //pthread_cond_broadcast(&g_cola.no_vacio);
+    //pthread_mutex_unlock(&g_cola.mutex);
 
     //hace el join de los hilos antes de cerrar
     for (long i = 0; i < cant_consumidores; i++){
@@ -304,9 +317,9 @@ int main(int argc, char **argv)
     //pthread_cond_destroy(&g_cola.no_lleno);
     //pthread_cond_destroy(&g_cola.no_vacio);
 
-    sem_destroy(&gcola->bloqueada);
-    sem_destroy(&gcola->cant_libre);
-    sem_destroy(&gcola->cant_ocupada);
+    sem_destroy(&g_cola.bloqueado);
+    sem_destroy(&g_cola.libres);
+    sem_destroy(&g_cola.ocupados);
 
     printf("\naccepted: %lu\n", accepted);
     printf("served:   %lu\n", g_requests_served);
