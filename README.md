@@ -1,20 +1,52 @@
-##Mini Server
+## Tarea Corta 04 – Semaphores Server 
 
-Instructions to set up a mini server:
-- Install all the required dependencies
+(Implementado sobre Tarea Corta 03 Producer-Consumer)
 
-Running the project:
-- Run make 
+### Instrucciones
 
-Run the server
-- Run the server using the command: `./bin/server_unsafe 8080` 
-- Args:
-  - The first argument is the port. You can select another port number if the port is already in use. The server will start listening on the specified port.
+- Instalar las dependencias requeridas (`sudo apt install build-essential`).
 
-Run the client 
-- Run the client using the command: `./bin/load_client 127.0.0.1 8080 8 150` 
-- Args:
-- The first argument is the server IP address. You can select another IP address if the server is running on a different machine.
-- The second argument is the server port number where the server is listening.
-- The third argument is the number of threads.
-- The fourth argument is the number of requests per thread. The client will send a total of (number of threads * number of requests per thread) requests to the server.
+- Para compilar el proyecto:
+
+```bash
+make
+```
+
+- Para ejecutar el servidor:
+
+```bash
+./bin/server_producer-consumer <puerto> <consumidores>
+```
+
+Ejemplo:
+
+```bash
+./bin/server_producer-consumer 8080 4
+```
+
+El servidor se detiene con Ctrl+C.
+
+- Para ejecutar el cliente:
+
+```bash
+./bin/load_client <ip> <puerto> <hilos> <peticiones-por-hilo>
+```
+
+Ejemplo:
+
+```bash
+./bin/load_client 127.0.0.1 8080 10 3000
+```
+
+- Restringir los cores usados:
+
+```bash
+taskset -c 0 ./bin/server_producer-consumer 8080 1     # 1 core
+taskset -c 0,1 ./bin/server_producer-consumer 8080 1   # 2 cores
+```
+
+- Medir el tiempo con el comando `time`:
+
+```bash
+time ./bin/load_client 127.0.0.1 8080 10 3000
+```
